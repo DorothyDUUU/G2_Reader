@@ -57,7 +57,7 @@ def _init_logger():
     import json
     from config.config import (
         LLM_BASE_URL, MODELS, LLM_GENERATION, RESPONSE_FORMAT,
-        MEMORY_SYSTEMS_DIR, PDF_TMP_DIR, DATASETS, MAX_CONCURRENCY, SAVE_CHECKS, MINERU
+        MEMORY_SYSTEMS_DIR, PDF_TMP_DIR, DATASETS, MAX_CONCURRENCY, SAVE_CHECKS
     )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -74,7 +74,6 @@ def _init_logger():
         "DATASETS_keys": list(DATASETS.keys()),
         "MAX_CONCURRENCY": MAX_CONCURRENCY,
         "SAVE_CHECKS": {k: getattr(SAVE_CHECKS, k) for k in vars(SAVE_CHECKS)},
-        "MINERU": MINERU,
         "api_key_masked": "****"
     }
 

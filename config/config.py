@@ -47,24 +47,21 @@ PDF_TMP_DIR: str = "/tmp/visdom_pdfs"
 DATA_ROOT = "/D2-Reader/data"
 
 DATASETS = {
-    # name -> {"csv":..., "base_dir":..., "key": col name holding q_id, "docs_col": col of doc list}
+    # name -> {"csv":..., "mineru_dir":..., "key": col name holding q_id, "docs_col": col of doc list}
     "MMLongBench": {
         "csv": f"{DATA_ROOT}/Visdom/MMLongBench/MMLongBench.csv",
-        "base_dir": f"{DATA_ROOT}/Visdom/MMLongBench/docs/",
         "mineru_dir": f"{DATA_ROOT}/mineru/MMLongBench/",
         "key": "q_id",
         "docs_col": "documents",
     },
     "spiqa": {
         "csv": f"{DATA_ROOT}/Visdom/spiqa/spiqa.csv",
-        "base_dir": f"{DATA_ROOT}/Visdom/spiqa/docs/",
         "mineru_dir": f"{DATA_ROOT}/mineru/spiqa/",
         "key": "q_id",
         "docs_col": "documents",
     },
     "feta_tab": {
         "csv": f"{DATA_ROOT}/Visdom/feta_tab/feta_tab.csv",
-        "base_dir": f"{DATA_ROOT}/Visdom/feta_tab/docs/",
         "mineru_dir": f"{DATA_ROOT}/mineru/fetatab/",
         "key": "q_id",
         "docs_col": "documents",
@@ -72,21 +69,18 @@ DATASETS = {
     },
     "scgqa": {
         "csv": f"{DATA_ROOT}/Visdom/scigraphvqa/scigraphqa.csv",
-        "base_dir": f"{DATA_ROOT}/Visdom/scigraphvqa/docs/",
         "mineru_dir": f"{DATA_ROOT}/mineru/scigraphvqa/",
         "key": "q_id",
         "docs_col": "documents",
     },
     "paper_tab": {
         "csv": f"{DATA_ROOT}/Visdom/paper_tab/paper_tab.csv",
-        "base_dir": f"{DATA_ROOT}/Visdom/paper_tab/docs/",
         "mineru_dir": f"{DATA_ROOT}/mineru/papertab/",
         "key": "q_id",
         "docs_col": "documents",
     },
     "slidevqa": {
         "csv": f"{DATA_ROOT}/Visdom/slidevqa/slidevqa.csv",
-        "base_dir": f"{DATA_ROOT}/Visdom/slidevqa/docs/",
         "mineru_dir": f"{DATA_ROOT}/mineru/slide/",
         "key": "q_id",
         "docs_col": "documents",
@@ -145,5 +139,3 @@ class SaveChecks:
     min_bytes: int = 10
 
 SAVE_CHECKS = SaveChecks()
-
-MINERU = True

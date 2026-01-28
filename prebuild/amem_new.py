@@ -17,18 +17,14 @@ from config.config import (
     PDF_TMP_DIR,
     DATASETS,
     MAX_CONCURRENCY,
-    MINERU,
     PARALLEL_ANALYSIS,
 )
 
 from prebuild.memory_layer import AgenticMemorySystem
 from utils.visdom_utils import (
-    extract_text_from_pdf,
-    split_text,
-    extract_images_from_pdf,
-    encode_image,
     clean_text,
     get_pdf,
+    encode_image,
 )
 from utils.mineru_utils import extract_chunk_from_mineru, extract_image_from_mineru
 
@@ -112,29 +108,6 @@ def load_dataset_df(name: str) -> pd.DataFrame:
     df = pd.read_csv(cfg["csv"], encoding=enc)
     _dataset_cache[name] = df
     return df
-
-def resolve_docs_from_dataset(dataset_name: str, q_id: str, limit: int = 5) -> Tuple[str, List[str]]:
-    cfg = DATASETS[dataset_name]
-    df = load_dataset_df(dataset_name)
-    key, docs_col = cfg["key"], cfg["docs_col"]
-    matches = np.where(df[key] == q_id)[0]
-    if len(matches) == 0:
-        raise ValueError(
-            f"错误：在 {dataset_name}.csv 中找不到 {key}='{q_id}' 的数据。\n"
-            f"可用的前若干 {key} 值：{df[key].unique()[:10].tolist()}..."
-        )
-    row = df.iloc[matches[0]].to_dict()
-    base_dir = cfg["base_dir"]
-    doc_names = list(eval(row[docs_col]))[:limit]
-    pdf_paths: List[str] = []
-    for doc in doc_names:
-        p = find_actual_file(base_dir, doc)
-        if p:
-            pdf_paths.append(p)
-        else:
-            print(f"skip file not found: {doc}")
-    print(f"found {len(pdf_paths)}/{len(doc_names)} files")
-    return base_dir, pdf_paths
 
 # Mineru dir aggregation
 def resolve_docs_from_dataset_mineru(dataset_name: str, q_id: str, limit: int = 5) -> Tuple[str, List[str]]:
@@ -370,13 +343,9 @@ async def construct_memory(
     detected_dataset = next((n for n in DATASETS.keys() if n in pdf_path), None)
 
     flag_dataset = detected_dataset is not None
-    flag_mineru = MINERU 
     name = pdf_path 
     if flag_dataset:
-        if flag_mineru:
-            _, pdf_paths = resolve_docs_from_dataset_mineru(detected_dataset, pdf_path)
-        else:
-            _, pdf_paths = resolve_docs_from_dataset(detected_dataset, pdf_path)
+        _, pdf_paths = resolve_docs_from_dataset_mineru(detected_dataset, pdf_path)
         print(pdf_paths)
     else:
         print("Downloading pdf")
@@ -399,31 +368,17 @@ async def construct_memory(
         print("initialize memory system")
         ms = AgenticMemorySystem(model_name=MODELS["embed"], llm_model=MODELS["chat"])  # type: ignore
 
-        if not flag_mineru:
-            # --- Extract text & images ---
-            pages = []
-            for p in pdf_paths:
-                pages.extend(extract_text_from_pdf(p))
-            chunks = []
-            for page in pages:
-                chunks.extend(split_text(page)) 
-             
-            images = []
-            for pdf_path in pdf_paths:
-                images.extend(extract_images_from_pdf(pdf_path))  
-             
-            images_b64 = [encode_image(image) for image in images]
-        else:
-            chunks = []
-            images_b64 = []
-            contexts = []
-            captions = []
-            for p in pdf_paths:
-                chunks.extend(extract_chunk_from_mineru(p))  
-                imgs, context,caption = extract_image_from_mineru(p)
-                images_b64.extend(encode_image(img) for img in imgs)
-                contexts.extend(context)
-                captions.extend(caption)
+        # Extract text & images from MinerU output
+        chunks = []
+        images_b64 = []
+        contexts = []
+        captions = []
+        for p in pdf_paths:
+            chunks.extend(extract_chunk_from_mineru(p))  
+            imgs, context, caption = extract_image_from_mineru(p)
+            images_b64.extend(encode_image(img) for img in imgs)
+            contexts.extend(context)
+            captions.extend(caption)
 
 
         # analyze needs to be modified TODO
@@ -493,10 +448,7 @@ async def construct_memory(
                 return image_contents
             
             image_analysis_start = time.time()
-            if not MINERU:
-                img_tasks = [analyze_content(b64, modality="image") for b64 in images_b64]
-            else:
-                img_tasks = [analyze_content_mineru(b64, modality="image", context=contexts[i], caption=captions[i]) for i, b64 in enumerate(images_b64)]
+            img_tasks = [analyze_content_mineru(b64, modality="image", context=contexts[i], caption=captions[i]) for i, b64 in enumerate(images_b64)]
             
             try:
                 img_results = await asyncio.gather(*img_tasks, return_exceptions=True)
