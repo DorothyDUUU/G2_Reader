@@ -6,14 +6,12 @@ import time
 import argparse
 import random
 import hashlib
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from PIL import Image
 
 from qasper_utils import amem_qa_visual
-from visdom_utils import extract_text_from_pdf, split_text, extract_images_from_pdf, encode_image
-
+from utils.visdom_utils import extract_text_from_pdf, split_text, extract_images_from_pdf, encode_image
 
 # =========================
 # Utils
@@ -21,30 +19,26 @@ from visdom_utils import extract_text_from_pdf, split_text, extract_images_from_
 def ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
 
-
 def stable_int_from_str(s: str) -> int:
     """Stable int from string (cross-run stable)."""
     h = hashlib.md5(s.encode("utf-8")).hexdigest()
     return int(h[:8], 16)
-
 
 def get_sample_rng(global_seed: int, sample_id: str) -> random.Random:
     """Per-sample RNG to avoid nondeterminism from multithreading scheduling."""
     seed_i = stable_int_from_str(f"{global_seed}:{sample_id}")
     return random.Random(seed_i)
 
-
 def safe_eval_documents_field(doc_field):
     """
-    documents 字段
+    documents
     """
     if isinstance(doc_field, list):
         return doc_field
     if isinstance(doc_field, str):
         try:
-            return eval(doc_field)  # noqa: S307 (保持与你原逻辑一致)
+            return eval(doc_field)
         except Exception:
-            # 尝试 JSON
             try:
                 return json.loads(doc_field)
             except Exception:
@@ -63,7 +57,7 @@ def to_pil(img):
 
 
 def clean_surrogates(obj):
-    """递归清理字符串中的代理字符"""
+    """recursively clean surrogate characters in strings"""
     if isinstance(obj, str):
         return obj.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
     elif isinstance(obj, dict):
@@ -77,13 +71,13 @@ def clean_surrogates(obj):
 def save_selected_text(seed_text_dir: str, sample_id: str, payload: dict):
     sample_dir = os.path.join(seed_text_dir, sample_id)
     ensure_dir(sample_dir)
-    # 清理无效的 Unicode 代理字符
+    # clean invalid Unicode surrogate characters
     payload = clean_surrogates(payload)
      
     # 1) chunks.json
     with open(os.path.join(sample_dir, "chunks.json"), "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    # 2) context.txt (方便肉眼看)
+    # 2) context.txt
     with open(os.path.join(sample_dir, "context.txt"), "w", encoding="utf-8") as f:
         f.write(payload.get("context", ""))
 
@@ -95,7 +89,6 @@ def save_selected_images(seed_pdf_dir: str, sample_id: str, pil_images_in_order)
     for i, im in enumerate(pil_images_in_order):
         fn = f"img_{i:03d}.png"
         out_path = os.path.join(sample_dir, fn)
-        # 统一保存为 PNG，保证二次复用一致
         im.save(out_path, format="PNG")
         manifest["images"].append(fn)
     with open(os.path.join(sample_dir, "manifest.json"), "w", encoding="utf-8") as f:
@@ -155,11 +148,11 @@ def extract_and_select_subset(
     seed_text_dir: str,
 ):
     """
-    1) 读 PDF 文本 + 图片
-    2) split_text -> per-sample rng 采样 chunk
-    3) per-sample rng 采样图片
-    4) 保存到 seedxxx/pdf & seedxxx/text
-    5) 返回 context(str), selected_pil_images(list), 以及用于记录的 payload
+    1) read PDF text + images
+    2) split_text -> per-sample rng sample chunks
+    3) per-sample rng sample images
+    4) save to seedxxx/pdf & seedxxx/text
+    5) return context(str), selected_pil_images(list), and payload for recording
     """
      
     sample_id = sample.get("_id", "unknown")
@@ -167,7 +160,7 @@ def extract_and_select_subset(
 
     rng = get_sample_rng(global_seed, sample_id)
 
-    # ---- 1. 抽取文本和图片 ----
+    # ---- 1. extract text and images ----
     t0 = time.time()
     pages = []
     for pdf_path in pdf_paths:
@@ -180,7 +173,7 @@ def extract_and_select_subset(
         new_images = extract_images_from_pdf(pdf_path)
         images_raw.extend(new_images)
 
-    # 统一转 PIL 并丢弃异常
+    # convert to PIL and discard exceptions
     pil_images = []
     for im in images_raw:
         pim = to_pil(im)
@@ -189,17 +182,17 @@ def extract_and_select_subset(
 
     t1 = time.time()
 
-    # ---- 2. chunk 采样（确定性）----
+    # ---- 2. chunk sampling (deterministic)----
     chunks = split_text(full_context)
     if len(chunks) > max_chunks:
-        # 采样顺序也固定：直接用 rng.sample 得到的顺序（不要排序）
+        # sampling order is fixed: use the order directly from rng.sample (no sorting)
         selected_chunks = rng.sample(chunks, max_chunks)
     else:
         selected_chunks = chunks[:]
 
     context = "\n".join(selected_chunks)
 
-    # ---- 3. 图片采样（确定性）----
+    # ---- 3. image sampling (deterministic)----
     if len(pil_images) > max_images:
         selected_pil_images = rng.sample(pil_images, max_images)
     else:
@@ -207,7 +200,7 @@ def extract_and_select_subset(
 
     t2 = time.time()
 
-    # ---- 4. 保存子集到磁盘（供二次复用）----
+    # ---- 4. save subset to disk (for reuse)----
     text_payload = {
         "sample_id": sample_id,
         "domain": sample_domain,
@@ -221,7 +214,7 @@ def extract_and_select_subset(
         "num_selected_chunks": len(selected_chunks),
         "num_total_images": len(pil_images),
         "num_selected_images": len(selected_pil_images),
-        "selected_chunks": selected_chunks,  # 原样保存（包括顺序）
+        "selected_chunks": selected_chunks, 
         "context": context,
         "timing": {
             "pdf_extraction": t1 - t0,
@@ -244,7 +237,7 @@ def load_subset_for_inference(seed_pdf_dir: str, seed_text_dir: str, sample: dic
 
 
 def run_model_inference(context: str, selected_pil_images, question: str, model_name: str):
-    # 编码图片（encode_image 你原来就是这样用）
+    # encode images (encode_image is used as is)
     encoded_images = [encode_image(im) for im in selected_pil_images]
     result = amem_qa_visual(
         context,
@@ -265,12 +258,6 @@ def process_single_sample(
     seed_text_dir: str,
     error_log_file: str = None,
 ):
-    """
-    三种模式：
-      - extract: 只抽取并保存 chunks/images，不推理
-      - infer: 只读取已保存 chunks/images，然后推理
-      - extract_and_infer: 抽取+保存+推理（第一次跑推荐用这个）
-    """
     sample_id = sample.get("_id", "unknown")
     question = sample.get("question", "")
 
@@ -278,9 +265,9 @@ def process_single_sample(
     time_breakdown = {}
      
     try:
-        print(f"[处理] Sample ID: {sample_id}")
+        print(f"[processing] Sample ID: {sample_id}")
 
-        # ---- A. 准备子集（抽取 or 读取）----
+        # ---- A. prepare subset (extract or read)----
         t0 = time.time()
         if args.mode in ("extract", "extract_and_infer"):
             context, selected_pil_images, subset_payload = extract_and_select_subset(
@@ -296,7 +283,7 @@ def process_single_sample(
             t1 = time.time()
             time_breakdown["pdf_extraction"] = subset_payload["timing"]["pdf_extraction"]
             time_breakdown["sampling"] = subset_payload["timing"]["sampling"]
-            times.append(t1 - t0)  # 仅表示“准备子集”的总时间（含保存）
+            times.append(t1 - t0) 
         elif args.mode == "infer":
             context, selected_pil_images, subset_payload = load_subset_for_inference(
                 seed_pdf_dir=seed_pdf_dir,
@@ -304,7 +291,6 @@ def process_single_sample(
                 sample=sample,
             )
             t1 = time.time()
-            # infer-only 模式下，抽取/采样已发生在历史运行里，这里记 0 或不记都行
             time_breakdown["pdf_extraction"] = 0.0
             time_breakdown["sampling"] = 0.0
             times.append(t1 - t0)
@@ -312,13 +298,12 @@ def process_single_sample(
             raise ValueError(f"Unknown mode: {args.mode}")
 
         print(
-            f"  ├─ 子集准备完成: chunks={subset_payload.get('num_selected_chunks', 0)} "
+            f"  ├─ subset prepared: chunks={subset_payload.get('num_selected_chunks', 0)} "
             f"images={subset_payload.get('num_selected_images', 0)} "
             f"(seed={args.seed}, mode={args.mode})"
         )
 
         if args.mode == "extract":
-            # 只抽取不推理
             sample["subset_saved"] = True
             sample["subset_root"] = seed_root
             sample["model_answer"] = None
@@ -331,7 +316,7 @@ def process_single_sample(
             sample["token_usage"] = None
             return sample
 
-        # ---- B. 推理 ----
+            # ---- B. 推理 ----
         t2 = time.time()
             
         result = run_model_inference(context, selected_pil_images, question, args.model)
@@ -347,7 +332,7 @@ def process_single_sample(
         times.append(t3 - t2)
         time_breakdown["model_inference"] = t3 - t2
 
-        # ---- C. 写回 sample ----
+        # ---- C. write back sample ----
         sample["subset_saved"] = True
         sample["subset_root"] = seed_root
         sample["subset_meta"] = {
@@ -371,16 +356,16 @@ def process_single_sample(
         sample["model_answer"] = answer
 
         print(
-            f"  └─ 推理完成: input={input_tokens}, output={output_tokens}, total={total_tokens}, "
+            f"  └─ inference completed: input={input_tokens}, output={output_tokens}, total={total_tokens}, "
             f"infer_time={time_breakdown['model_inference']:.2f}s"
         )
         return sample
 
     except Exception as e:
-        error_msg = f"[错误] Sample ID: {sample_id} - {type(e).__name__}: {e}"
+        error_msg = f"[error] Sample ID: {sample_id} - {type(e).__name__}: {e}"
         print(error_msg)
         
-        # 保存错误日志到文件
+        # save error log to file
         if error_log_file:
             error_record = {
                 "sample_id": sample_id,
@@ -401,7 +386,7 @@ def process_single_sample(
 # Main
 # =========================
 def load_data(path: str):
-    print(f"[INFO] 开始加载数据: {path}")
+    print(f"[INFO] start loading data: {path}")
     data = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -409,13 +394,12 @@ def load_data(path: str):
             if not line:
                 continue
             data.append(json.loads(line))
-    print(f"[INFO] 数据加载完成，共 {len(data)} 条样本")
+    print(f"[INFO] data loaded, total {len(data)} samples")
     return data
 
 
 def dataset_name_from_input(input_path: str) -> str:
     bn = os.path.basename(input_path)
-    # 去掉 .jsonl / .json 等
     bn = re.sub(r"\.(jsonl|json)$", "", bn)
     return bn
 
@@ -424,31 +408,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_path", type=str, required=True)
     parser.add_argument("--doc_root", type=str, required=True)
-
     parser.add_argument("--model", type=str, default=os.getenv("OPENAI_MODEL", "qwen3-vl-32b-instruct"))
     parser.add_argument("--seed", type=int, default=42)
-
     parser.add_argument("--mode", type=str, choices=["extract", "infer", "extract_and_infer"], default="extract_and_infer")
-
     parser.add_argument("--max_pdfs_per_sample", type=int, default=5)
     parser.add_argument("--max_chunks", type=int, default=10)
     parser.add_argument("--max_images", type=int, default=10)
     parser.add_argument("--num_workers", type=int, default=10)
-
     parser.add_argument("--out_root", type=str, default="Single-llm/results")
-    parser.add_argument("--run_tag", type=str, default="", help="可选：给本次运行加一个tag，便于区分")
-
     args = parser.parse_args()
 
-    # seedxxx 目录
     seed_root = os.path.join(args.out_root, f"seed{args.seed:03d}")
-    if args.run_tag:
-        seed_root = os.path.join(seed_root, args.run_tag)
 
-    # 子文件夹结构（按你的要求）：
-    # 1) 子文件夹1：模型结果
-    # 2) 子文件夹2：pdf/<sample_id>/img_***
-    # 3) 子文件夹3：text/<sample_id>/chunks.json + context.txt
+
     dataset_name = dataset_name_from_input(args.input_path)
     seed_results_dir = os.path.join(seed_root, "results", dataset_name, args.model)
     seed_pdf_dir = os.path.join(seed_root, "pdf")
@@ -458,13 +430,12 @@ def main():
     ensure_dir(seed_pdf_dir)
     ensure_dir(seed_text_dir)
 
-    # 输出文件（放在 results 子文件夹里）
     output_path = os.path.join(seed_results_dir, "results.jsonl")
     stats_file = os.path.join(seed_results_dir, "stats.json")
     error_log_file = os.path.join(seed_results_dir, "errors.jsonl")
 
     print("=" * 80)
-    print("[INFO] 运行配置")
+    print("[INFO] running configuration")
     print(f"  - input_path: {args.input_path}")
     print(f"  - doc_root:   {args.doc_root}")
     print(f"  - model:      {args.model}")
@@ -478,7 +449,7 @@ def main():
       
     data = load_data(args.input_path)
 
-    # 清空输出文件
+    # clear output file
     with open(output_path, "w", encoding="utf-8") as f:
         pass
 
@@ -496,7 +467,7 @@ def main():
     total_inference_time = 0.0
 
     futures = []
-    # 串行调试
+    # serial debugging
     if args.num_workers == 1:
         for sample in data:
               
@@ -533,7 +504,7 @@ def main():
                 )
 
             with open(output_path, "a", encoding="utf-8") as f_out:
-                for future in tqdm(as_completed(futures), total=len(futures), desc="处理进度"):
+                for future in tqdm(as_completed(futures), total=len(futures), desc="processing progress"):
                     result = future.result()
                     if result is None:
                         failed_count += 1
@@ -542,7 +513,7 @@ def main():
                     completed_count += 1
                     f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-                    # 统计
+                    # statistics
                     tb = result.get("time_breakdown") or {}
                     total_extraction_time += float(tb.get("pdf_extraction", 0.0))
                     total_sampling_time += float(tb.get("sampling", 0.0))
@@ -556,7 +527,7 @@ def main():
     end_time = time.time()
     total_time = end_time - start_time
 
-    # 保存 stats
+    # save stats
     stats = {
         "dataset": dataset_name,
         "model": args.model,
@@ -595,12 +566,12 @@ def main():
         json.dump(stats, f, ensure_ascii=False, indent=2)
 
     print("=" * 80)
-    print("[完成] 所有样本处理完成！")
-    print(f"  - 总样本数: {len(data)}")
-    print(f"  - 成功处理: {completed_count}")
-    print(f"  - 失败数量: {failed_count}")
-    print(f"  - 输出文件: {output_path}")
-    print(f"  - 统计文件: {stats_file}")
+    print("[completed] all samples processed!")
+    print(f"  - total samples: {len(data)}")
+    print(f"  - successful: {completed_count}")
+    print(f"  - failed: {failed_count}")
+    print(f"  - output file: {output_path}")
+    print(f"  - statistics file: {stats_file}")
     print("=" * 80)
 
 

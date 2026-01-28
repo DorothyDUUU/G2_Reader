@@ -25,6 +25,25 @@ MAX_PDFS=5
 MAX_CHUNKS=10
 MAX_IMAGES=10
 
+# first: extract + save + infer (produce seedxxx/pdf/text/results)
+# for d in "${DATASETS[@]}"; do
+#   for m in "${MODELS[@]}"; do
+#     echo "=== RUN extract_and_infer | seed=${SEED} | model=${m} | dataset=${d}"
+#     $PY $SCRIPT \
+#       --input_path "$d" \
+#       --doc_root "$DOC_ROOT" \
+#       --out_root "$OUT_ROOT" \
+#       --seed "$SEED" \
+#       --model "$m" \
+#       --mode "extract_and_infer" \
+#       --num_workers "$NUM_WORKERS" \
+#       --max_pdfs_per_sample "$MAX_PDFS" \
+#       --max_chunks "$MAX_CHUNKS" \
+#       --max_images "$MAX_IMAGES"
+#   done
+# done
+
+# second: only reuse subset inference (no more extraction, no more randomization)
 for d in "${DATASETS[@]}"; do
   for m in "${MODELS[@]}"; do
     echo "=== RUN infer only | seed=${SEED} | model=${m} | dataset=${d}"

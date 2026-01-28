@@ -106,17 +106,14 @@ decomposer_dag_prompt = _read_prompt("decomposer_dag.txt")
 reasoner_dag_prompt = _read_prompt("reasoner_dag_node.txt")
 evidence_check_prompt = _read_prompt("evidence_check.txt")
 decomposer_dag_after_check_prompt = _read_prompt("dag_decomposer_after_check_prompt.txt")
-retrive_strategy_prompt = _read_prompt("retrive_strategy.txt")
 text_analysis_prompt = _read_prompt("text_analysis.txt")
 image_analysis_prompt = _read_prompt("image_analysis.txt")
 image_analysis_prompt_mineru = _read_prompt("image_analysis_mineru.txt")
 hybrid_analysis_prompt = _read_prompt("hybrid_analysis.txt")
 memory_evolve_prompt_sjr = _read_prompt("memory_evolve.txt")
 evaluate_prompt = _read_prompt("eval.txt")
-
 image_analysis_prompt_keyword = _read_prompt("image_analysis_keyword.txt")
 text_analysis_prompt_keyword = _read_prompt("text_analysis_keyword.txt")
-
 image_ocr_keyword_prompt = _read_prompt("image_analysis_ocrkeyword.txt")
 query_keywords_prompt = _read_prompt("query_keywords.txt")
 

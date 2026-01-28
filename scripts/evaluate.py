@@ -23,7 +23,7 @@ project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from config.config import new_evaluate_prompt
+from config.config import evaluate_prompt
 
 LLM_BASE_URL = "<YOUR_BASE_URL>"
 LLM_API_KEY = "<YOUR_API_KEY>"
@@ -38,7 +38,7 @@ class Evaluator:
         self.model = model
         self.tokenizer = tiktoken.encoding_for_model("gpt-4o-2024-08-06")
         self.client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
-        self.evaluate_prompt_template = new_evaluate_prompt
+        self.evaluate_prompt_template = evaluate_prompt
         
         self.error_log_file = error_log_file
         self.error_lock = threading.Lock()
@@ -143,7 +143,6 @@ class Evaluator:
         times = sample.get('process_time', '')
         input_tokens = sample.get('usage', {}).get('prompt_tokens', 0)
         output_tokens = sample.get('usage', {}).get('completion_tokens', 0)
-        pred=sample.get('pred', '')
 
         new_sample = {
             'q_id': q_id,
@@ -155,19 +154,12 @@ class Evaluator:
             'output_tokens': output_tokens
         }
 
-        if "没有输出" in model_answer:
-            return {
-                "sample": new_sample,
-                "status": "skipped",
-                "accuracy": 0
-            }
-        # extracted_answer = self.extract_model_answer(model_answer)
-
+        extracted_answer = self.extract_model_answer(model_answer)
         try:
-            eval_result = self.evaluate_correctness(pred, answer, question)
+            eval_result = self.evaluate_correctness(extracted_answer, answer, question)
             new_sample['eval_accuracy'] = eval_result['accuracy']
             new_sample['eval_reasoning'] = eval_result['reasoning']
-            new_sample['extracted_answer'] = pred
+            new_sample['extracted_answer'] = extracted_answer
             
             return {
                 "sample": new_sample,
@@ -176,9 +168,9 @@ class Evaluator:
             }
             
         except Exception as e:
-            print(f"\n⚠️ 评估样本 {q_id} 时出错: {e}")
+            print(f"\n⚠️ evaluate sample {q_id} failed: {e}")
             new_sample['eval_accuracy'] = 0
-            new_sample['eval_reasoning'] = f"评估出错: {str(e)}"
+            new_sample['eval_reasoning'] = f"evaluate failed: {str(e)}"
             new_sample['extracted_answer'] = model_answer
             
             return {
@@ -192,11 +184,11 @@ class Evaluator:
             input_path = Path(input_file)
             output_file = str(input_path.parent / f"{input_path.stem}_evaluated{input_path.suffix}")
         
-        print(f"📖 读取输入文件: {input_file}")
+        print(f"📖 read input file: {input_file}")
         with open(input_file, 'r', encoding='utf-8') as f:
             samples = [json.loads(line) for line in f if line.strip()]
-        print(f"✅ 共读取 {len(samples)} 个样本")
-        print(f"🚀 使用 {num_threads} 个线程并行评估")
+        print(f"✅ total {len(samples)} samples")
+        print(f"🚀 use {num_threads} threads to evaluate")
         
         stats = {
             "total": len(samples),
@@ -209,12 +201,12 @@ class Evaluator:
             "output_token": 0
         }
         
-        print(f"🔍 开始评估...")
+        print(f"🔍 start evaluating...")
         evaluated_samples = [None] * len(samples)
         lock = threading.Lock()
         
         if num_threads == 1:
-            for idx, sample in enumerate(tqdm(samples, desc="评估进度")):
+            for idx, sample in enumerate(tqdm(samples, desc="evaluating progress")):
                 result = self.evaluate_single_sample(sample)
                 evaluated_samples[idx] = result["sample"]
                 
@@ -235,7 +227,7 @@ class Evaluator:
                     for idx, sample in enumerate(samples)
                 }
                 
-                with tqdm(total=len(samples), desc="评估进度") as pbar:
+                with tqdm(total=len(samples), desc="evaluating progress") as pbar:
                     for future in as_completed(future_to_idx):
                         idx = future_to_idx[future]
                         try:
@@ -254,10 +246,10 @@ class Evaluator:
                                     stats["incorrect"] += 1
                             
                         except Exception as e:
-                            print(f"\n⚠️ 处理样本 {idx} 时出错: {e}")
+                            print(f"\n⚠️ process sample {idx} failed: {e}")
                             evaluated_samples[idx] = samples[idx]
                             evaluated_samples[idx]['eval_accuracy'] = 0
-                            evaluated_samples[idx]['eval_reasoning'] = f"处理出错: {str(e)}"
+                            evaluated_samples[idx]['eval_reasoning'] = f"process failed: {str(e)}"
                             with lock:
                                 stats["incorrect"] += 1
                     
@@ -270,7 +262,7 @@ class Evaluator:
         if total_evaluated > 0:
             stats["accuracy_rate"] = stats["correct"] / total_evaluated
         
-        print(f"💾 保存评估结果到: {output_file}")
+        print(f"💾 save evaluation result to: {output_file}")
         if not os.path.exists(os.path.dirname(output_file)):
             os.makedirs(os.path.dirname(output_file))
         with open(output_file, 'w', encoding='utf-8') as f:
@@ -278,26 +270,26 @@ class Evaluator:
                 f.write(json.dumps(sample, ensure_ascii=False) + '\n')
         
         print("\n" + "="*60)
-        print("📊 评估统计:")
-        print(f"  总样本数: {stats['total']}")
-        print(f"  本次评估: {stats['evaluated']}")
-        print(f"  跳过样本: {stats['skipped']}")
-        print(f"  正确数量: {stats['correct']}")
-        print(f"  错误数量: {stats['incorrect']}")
-        print(f"  准确率: {stats['accuracy_rate']:.2%}")
+        print("📊 evaluation statistics:")
+        print(f"  total samples: {stats['total']}")
+        print(f"  evaluated samples: {stats['evaluated']}")
+        print(f"  skipped samples: {stats['skipped']}")
+        print(f"  correct number: {stats['correct']}")
+        print(f"  incorrect number: {stats['incorrect']}")
+        print(f"  accuracy rate: {stats['accuracy_rate']:.2%}")
         print("="*60)
         
         return stats
 
 
 def main():
-    parser = argparse.ArgumentParser(description="评估模型生成的答案")
+    parser = argparse.ArgumentParser(description="evaluate the model generated answers")
     parser.add_argument('--input_file', type=str, default="")
     parser.add_argument('--output_file', type=str, default=None)
     parser.add_argument('--model', type=str, default='gpt-4o-mini')
     parser.add_argument('--num_threads', type=int, default=50)
-    parser.add_argument('--num_evals', type=int, default=2, help='每个文件评估的次数')
-    parser.add_argument('--summary_file', type=str, default=None, help='汇总结果文件路径')
+    parser.add_argument('--num_evals', type=int, default=2, help='number of evaluations for each file')
+    parser.add_argument('--summary_file', type=str, default=None, help='summary result file path')
     
     args = parser.parse_args()
 
@@ -308,7 +300,7 @@ def main():
     ]
     domain=['slidevqa','scgqa','spiqa','feta_tab','paper_tab']
 
-    # 按基础路径分组构建文件列表    
+    # group files by base path    
     files_by_base_path = {}
     for base_path in base_paths:
         files_by_base_path[base_path] = []
@@ -318,33 +310,29 @@ def main():
 
     evaluator = Evaluator(model=args.model)
     
-    # 对每个基础路径分别进行评估
+    # evaluate each base path separately
     for base_path, input_files in files_by_base_path.items():
         print(f"\n{'#'*80}")
-        print(f"🚀 开始评估基础路径: {base_path}")
+        print(f"🚀 start evaluating base path: {base_path}")
         print(f"{'#'*80}\n")
         
-        # 为每个基础路径生成独立的summary_file
+        # generate independent summary file for each base path
         if args.summary_file is None:
             first_output = input_files[0].replace('results', 'eval_result/DAG')
-            # 获取该基础路径对应的评估目录
             base_eval_dir = os.path.dirname(os.path.dirname(first_output))
             current_summary_file = os.path.join(base_eval_dir, 'evaluation_summary.jsonl')
         else:
-            # 如果用户指定了summary_file，则在指定路径下为每个base_path创建子文件
             summary_dir = os.path.dirname(args.summary_file)
             summary_name = os.path.basename(args.summary_file)
             name_parts = os.path.splitext(summary_name)
             current_summary_file = os.path.join(summary_dir, f"{name_parts[0]}_{base_path}{name_parts[1]}")
         
-        # 确保汇总文件目录存在，并初始化空文件
         summary_dir = os.path.dirname(current_summary_file)
         if summary_dir:
             os.makedirs(summary_dir, exist_ok=True)
-        # 清空或创建汇总文件
         with open(current_summary_file, 'w', encoding='utf-8') as f:
             pass
-        print(f"📝 当前基础路径的汇总结果将保存到: {current_summary_file}\n")
+        print(f"📝 the summary result of the current base path will be saved to: {current_summary_file}\n")
         
         all_results = []
         input_tokens = []
@@ -352,16 +340,16 @@ def main():
 
         for input_file in input_files:
             print(f"\n{'='*80}")
-            print(f"📁 评估文件: {input_file}")
+            print(f"📁 evaluate file: {input_file}")
             print(f"{'='*80}")
                     
             accuracy_rates = []
             output_file = input_file.replace('results', 'eval_result/DAG')
             # output_file = args.output_file
             if input_file == output_file:
-                raise ValueError(f"输入文件和输出文件相同: {input_file} == {output_file}")
+                raise ValueError(f"input file and output file are the same: {input_file} == {output_file}")
             for eval_round in range(args.num_evals):
-                print(f"\n🔄 第 {eval_round + 1}/{args.num_evals} 次评估...")
+                print(f"\n🔄 the {eval_round + 1}/{args.num_evals} evaluation...")
                 stats = evaluator.evaluate_file(
                     input_file=input_file,
                     output_file=output_file,
@@ -369,7 +357,7 @@ def main():
                 )
                 
                 accuracy_rates.append(stats['accuracy_rate'])
-                print(f"   准确率: {stats['accuracy_rate']:.4f}")
+                print(f"    accuracy rate: {stats['accuracy_rate']:.4f}")
             
             input_tokens.append(stats['input_token'])
             output_tokens.append(stats['output_token'])
@@ -394,37 +382,37 @@ def main():
             
             all_results.append(file_result)
             
-            print(f"\n📊 汇总统计:")
-            print(f"   平均准确率: {mean_accuracy:.4f}")
-            print(f"   标准差: {std_accuracy:.4f}")
-            print(f"   各轮准确率: {[f'{acc:.4f}' for acc in accuracy_rates]}")
+            print(f"\n📊 summary statistics:")
+            print(f"    average accuracy rate: {mean_accuracy:.4f}")
+            print(f"    standard deviation: {std_accuracy:.4f}")
+            print(f"    accuracy rates for each round: {[f'{acc:.4f}' for acc in accuracy_rates]}")
         
-            # 立即追加写入汇总文件
-            print(f"💾 追加写入汇总结果到: {current_summary_file}")
+            # immediately append to summary file
+            print(f"💾 append to summary file: {current_summary_file}")
             with open(current_summary_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(file_result, ensure_ascii=False) + '\n')
         
-        # 当前基础路径的评估完成后，输出汇总
+        # after the evaluation of the current base path, output the summary
         print(f"\n{'='*80}")
-        print(f"✅ 基础路径 {base_path} 评估完成！")
+        print(f"✅ base path {base_path} evaluation completed!")
         print(f"{'='*80}")
-        print(f"总文件数: {len(all_results)}")
-        print(f"\ndomain: {domain} 详细结果:")
+        print(f"total files: {len(all_results)}")
+        print(f"\ndomain: {domain} detailed results:")
         for result in all_results:
             filename = os.path.basename(os.path.dirname(result['output_file']))
             print(f"  {filename}:")
-            print(f"    平均准确率: {result['mean_accuracy']:.4f} ± {result['std_accuracy']:.4f}")
+            print(f"     average accuracy rate: {result['mean_accuracy']:.4f} ± {result['std_accuracy']:.4f}")
         
-        # 计算总token数和总成本
+        # calculate total token count and total cost
         total_cost = (mean_input_token / 1000000 * PRICE_INPUT) + (mean_output_token / 1000000 * PRICE_OUTPUT)
         
-        print(f"总的平均结果是: {np.mean([result['mean_accuracy'] for result in all_results]):.4f} ± {np.mean([result['std_accuracy'] for result in all_results]):.2f}")
-        print(f"平均每个文件输入token数: {mean_input_token:.0f}; 平均每个文件输出token数: {mean_output_token:.0f}")
-        print(f"平均总token消耗： {mean_input_token + mean_output_token:.0f}")
-        print(f"平均成本: ${total_cost:.4f} USD")
+        print(f"the overall average result is: {np.mean([result['mean_accuracy'] for result in all_results]):.4f} ± {np.mean([result['std_accuracy'] for result in all_results]):.2f}")
+        print(f"average input token per file: {mean_input_token:.0f}; average output token per file: {mean_output_token:.0f}")
+        print(f"average total token consumption: {mean_input_token + mean_output_token:.0f}")
+        print(f"average cost: ${total_cost:.4f} USD")
         print(f"{'='*80}")
 
-        # 保存到txt文件中
+        # save to txt file
         txt_fname = os.path.join(os.path.dirname(os.path.dirname(input_files[0])), 'results.txt')
         with open(txt_fname, 'w', encoding='utf-8') as f:
             for result in all_results:
@@ -436,7 +424,7 @@ def main():
             f.write(f"Total Cost: ${total_cost:.4f} USD\n")
     
     print(f"\n{'#'*80}")
-    print("🎉 所有基础路径评估完成！")
+    print("🎉 all base paths evaluation completed!")
     print(f"{'#'*80}")
 if __name__ == "__main__":
     main()

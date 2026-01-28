@@ -1,34 +1,28 @@
 import os
 import json
 import time
-import pickle
 import asyncio
 from typing import Dict, List, Tuple, Any
 import numpy as np
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor
 from openai import OpenAI,AsyncOpenAI
 
 from config.config import (
     LLM_BASE_URL,
     LLM_API_KEY,
-    EMBED_BASE_URL,
-    EMBED_API_KEY,
     MODELS,
     LLM_GENERATION,
-    RESPONSE_FORMAT,
     PROMPTS,
     MEMORY_SYSTEMS_DIR,
     PDF_TMP_DIR,
     DATASETS,
     MAX_CONCURRENCY,
-    SAVE_CHECKS,
     MINERU,
     PARALLEL_ANALYSIS,
 )
 
 from prebuild.memory_layer import AgenticMemorySystem
-from prebuild.visdom_utils import (
+from utils.visdom_utils import (
     extract_text_from_pdf,
     split_text,
     extract_images_from_pdf,
@@ -36,27 +30,19 @@ from prebuild.visdom_utils import (
     clean_text,
     get_pdf,
 )
-from prebuild.mineru_utils import extract_chunk_from_mineru, extract_image_from_mineru
+from utils.mineru_utils import extract_chunk_from_mineru, extract_image_from_mineru
 
 from prebuild.usage_tracker import add_chat_usage, add_embed_usage, add_stage_duration, add_single_call_duration
-from tenacity import retry, stop_after_attempt, wait_exponential
 # Optional: tqdm_asyncio is nice to have; if not available, fallback to asyncio.gather
 try:
-    from tqdm.asyncio import tqdm_asyncio
     _use_tqdm = True
 except Exception:
     _use_tqdm = False
 
-
 # -----------------------------
 # Client
 # -----------------------------
-client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-aclient = AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-
-qwen_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
 qwen_aclient = AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-
 
 _llm_sem_by_loop = {}
 
@@ -71,15 +57,9 @@ def _get_llm_semaphore():
 # -----------------------------
 # Utilities
 # -----------------------------
-async def _gather(tasks: List[asyncio.Task]):
-    if _use_tqdm:
-        return await tqdm_asyncio.gather(*tasks)
-    return await asyncio.gather(*tasks)
-
 
 def ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
-
 
 def find_actual_file(base_dir: str, filename: str) -> str | None:
     """Robust matching for potentially mangled filenames (encoding issues)."""
@@ -119,7 +99,6 @@ def find_actual_file(base_dir: str, filename: str) -> str | None:
         print(f"查找文件时出错 {filename}: {e}")
         return None
 
-
 # -----------------------------
 # Dataset helpers
 # -----------------------------
@@ -133,7 +112,6 @@ def load_dataset_df(name: str) -> pd.DataFrame:
     df = pd.read_csv(cfg["csv"], encoding=enc)
     _dataset_cache[name] = df
     return df
-
 
 def resolve_docs_from_dataset(dataset_name: str, q_id: str, limit: int = 5) -> Tuple[str, List[str]]:
     cfg = DATASETS[dataset_name]
@@ -154,8 +132,8 @@ def resolve_docs_from_dataset(dataset_name: str, q_id: str, limit: int = 5) -> T
         if p:
             pdf_paths.append(p)
         else:
-            print(f"跳过无法找到的文件: {doc}")
-    print(f"成功找到 {len(pdf_paths)}/{len(doc_names)} 个文件")
+            print(f"skip file not found: {doc}")
+    print(f"found {len(pdf_paths)}/{len(doc_names)} files")
     return base_dir, pdf_paths
 
 # Mineru dir aggregation
@@ -167,26 +145,21 @@ def resolve_docs_from_dataset_mineru(dataset_name: str, q_id: str, limit: int = 
     matches = np.where(df[key] == q_id)[0]
     if len(matches) == 0:
         raise ValueError(
-            f"错误：在 {dataset_name}.csv 中找不到 {key}='{q_id}' 的数据。\n"
-            f"可用的前若干 {key} 值：{df[key].unique()[:10].tolist()}..."
+            f"error: data not found in {dataset_name}.csv for {key}='{q_id}'.\n"
+            f"available {key} values: {df[key].unique()[:10].tolist()}..."
         )
 
     row = df.iloc[matches[0]].to_dict()
     base_dir = cfg["mineru_dir"]
 
-    # ============================
-    # ✨ 去掉 .pdf 后缀（你需要的部分）
-    # ============================
     doc_names_raw = list(eval(row[docs_col]))[:limit]
     doc_names = [os.path.splitext(d)[0] for d in doc_names_raw]
-    # ============================
 
     mineru_paths: List[str] = []
 
     for doc in doc_names:
         p = find_actual_file(base_dir, doc)
 
-        # 深入两层
         for _ in range(2):
             subs = [d for d in os.listdir(p) if os.path.isdir(os.path.join(p, d))]
             if len(subs) == 1:
@@ -197,13 +170,13 @@ def resolve_docs_from_dataset_mineru(dataset_name: str, q_id: str, limit: int = 
         if p:
             mineru_paths.append(p)
         else:
-            print(f"跳过无法找到的文件: {doc}")
+            print(f"skip file not found: {doc}")
 
-    print(f"成功找到 {len(mineru_paths)}/{len(doc_names)} 个文件")
+    print(f"found {len(mineru_paths)}/{len(doc_names)} files")
     return base_dir, mineru_paths
 
 def _log_failed_response(raw: str, error: Exception, is_multimodal: bool, user_payload):
-    """将解析失败的 LLM 响应记录到日志文件"""
+    """record failed LLM response to log file"""
     from datetime import datetime
     log_dir = os.path.join(MEMORY_SYSTEMS_DIR, "_debug_logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -213,34 +186,34 @@ def _log_failed_response(raw: str, error: Exception, is_multimodal: bool, user_p
     
     with open(log_file, "w", encoding="utf-8") as f:
         f.write(f"=" * 80 + "\n")
-        f.write(f"时间: {datetime.now().isoformat()}\n")
-        f.write(f"类型: {'multimodal' if is_multimodal else 'text'}\n")
-        f.write(f"错误: {type(error).__name__}: {error}\n")
+        f.write(f"time: {datetime.now().isoformat()}\n")
+        f.write(f"type: {'multimodal' if is_multimodal else 'text'}\n")
+        f.write(f"error: {type(error).__name__}: {error}\n")
         f.write(f"=" * 80 + "\n\n")
         
-        f.write("【原始响应 (raw response)】\n")
+        f.write("[raw response]\n")
         f.write("-" * 40 + "\n")
-        f.write(raw if raw else "(空响应)")
+        f.write(raw if raw else "(empty response)")
         f.write("\n" + "-" * 40 + "\n\n")
         
-        f.write(f"响应长度: {len(raw) if raw else 0} 字符\n")
-        f.write(f"finish_reason: (见上方错误信息)\n\n")
+        f.write(f"response length: {len(raw) if raw else 0} characters\n")
+        f.write(f"finish_reason: (see error information above)\n\n")
         
-        # 记录输入（对于文本类型）
+        # record input (for text type)
         if not is_multimodal and isinstance(user_payload, str):
-            f.write("【输入内容 (user_payload 前2000字符)】\n")
+            f.write("[input content (first 2000 characters of user_payload)]\n")
             f.write("-" * 40 + "\n")
             f.write(user_payload[:2000])
             f.write("\n" + "-" * 40 + "\n")
     
-    print(f"[DEBUG] 解析失败的响应已保存到: {log_file}")
+    print(f"[DEBUG] failed response saved to: {log_file}")
     return log_file
 
 
 async def call_llm_json(system: str, user_payload, *, is_multimodal: bool = False):
     sem = _get_llm_semaphore()
     async with sem:
-        call_start = time.time()  # 记录单次调用开始时间
+        call_start = time.time() 
         try:
             resp = await qwen_aclient.chat.completions.create(
                     model=MODELS["chat"],
@@ -249,16 +222,15 @@ async def call_llm_json(system: str, user_payload, *, is_multimodal: bool = Fals
                         {"role": "user", "content": user_payload},
                     ],
                     response_format={"type": "json_object"},
-                    # frequency_penalty=0.5,
                     **LLM_GENERATION,
                 )
         except Exception as err:
                 # network / timeout / Azure filtering
             print(f"[ERROR] LLM request failed: {err}")
             await asyncio.sleep(1)
-            raise  # ❌ 抛出异常，不记录此次调用时间
+            raise 
 
-        # ✅ 只有成功的调用才计算耗时
+        # only record duration for successful calls
         call_duration = time.time() - call_start
         
         try:
@@ -267,7 +239,7 @@ async def call_llm_json(system: str, user_payload, *, is_multimodal: bool = Fals
                 getattr(resp, "usage", None),
                 {"model": MODELS["chat"], "qkind": qkind}
             )
-            # 只记录成功调用的最大耗时
+            # only record duration for successful calls
             stage = "image_analysis" if is_multimodal else "text_analysis"
             add_single_call_duration(stage, call_duration)
         except Exception:
@@ -276,25 +248,25 @@ async def call_llm_json(system: str, user_payload, *, is_multimodal: bool = Fals
         raw = resp.choices[0].message.content
         finish_reason = resp.choices[0].finish_reason if resp.choices else None
         
-        # 检查是否被截断
+        # check if truncated
         if finish_reason == "length":
-            print(f"[WARNING] 响应被截断 (finish_reason=length)，可能导致 JSON 不完整")
+            print(f"[WARNING] response truncated (finish_reason=length),可能导致 JSON 不完整")
         
         try:
             return json.loads(raw)
         except json.JSONDecodeError as e:
             print(f"{e}")
-            # 尝试提取 JSON 对象
+            # try to extract JSON object
             import re
             m = re.search(r"\{[\s\S]*\}", raw)
             if m:
                 try:
                     return json.loads(m.group(0))
                 except json.JSONDecodeError as e2:
-                    # 记录失败的响应
+                    # record failed response
                     _log_failed_response(raw, e2, is_multimodal, user_payload)
                     raise
-            # 记录失败的响应
+            # record failed response
             _log_failed_response(raw, e, is_multimodal, user_payload)
             raise
     
@@ -340,21 +312,21 @@ async def analyze_content_mineru(payload: str, *, modality: str, context: str = 
 # Embedding helpers
 # -----------------------------
 async def embed_one(text: str, kind: str = "embedding") -> List[float]:
-    # 使用单独的 Embedding 异步客户端
-    call_start = time.time()  # 记录单次调用开始时间
+    # use separate Embedding async client
+    call_start = time.time()  
     try:
         resp = await embed_aclient.embeddings.create(model=MODELS["embed"], input=text)
     except Exception as err:
-        # ❌ API 失败，不记录此次调用时间
+        # API failed, not record duration for this call
         print(f"[ERROR] Embedding request failed: {err}")
         raise
     
-    # ✅ 只有成功的调用才计算耗时
+    # only record duration for successful calls
     call_duration = time.time() - call_start
     
     try:
         add_embed_usage(getattr(resp, "usage", None), {"model": MODELS["embed"], "kind": kind})
-        # 只记录成功调用的最大耗时
+        # only record duration for successful calls
         add_single_call_duration(kind, call_duration)
     except Exception:
         pass
@@ -388,18 +360,18 @@ async def construct_memory(
     Uses config for URLs, API keys, absolute paths, and prompts.
     """
     print("\n" + "=" * 80)
-    print(f"开始构建Memory System: {pdf_path}")
+    print(f"start building Memory System: {pdf_path}")
     print("=" * 80)
 
     ensure_dir(MEMORY_SYSTEMS_DIR)
     ensure_dir(PDF_TMP_DIR)
 
-    # Detect dataset by substring; else treat as URL/local file and download
+    # detect dataset by substring; else treat as URL/local file and download
     detected_dataset = next((n for n in DATASETS.keys() if n in pdf_path), None)
 
     flag_dataset = detected_dataset is not None
     flag_mineru = MINERU 
-    name = pdf_path  # use provided key/q_id as memory name for dataset cases
+    name = pdf_path 
     if flag_dataset:
         if flag_mineru:
             _, pdf_paths = resolve_docs_from_dataset_mineru(detected_dataset, pdf_path)
@@ -417,24 +389,24 @@ async def construct_memory(
             raise
         pdf_paths = [out_path]
 
-    # Load or initialize memory system
+    # load or initialize memory system
     existing = set(os.listdir(MEMORY_SYSTEMS_DIR))
     if name in existing:
         print(f"Loading existing memory system: {name}")
         ms = AgenticMemorySystem(model_name=MODELS["embed"], llm_model=MODELS["chat"])  # type: ignore
         ms.load_memory_system(name+"_iter_"+str(evolve_iters))
     else:
-        print("initializing memory system")
+        print("initialize memory system")
         ms = AgenticMemorySystem(model_name=MODELS["embed"], llm_model=MODELS["chat"])  # type: ignore
 
         if not flag_mineru:
             # --- Extract text & images ---
             pages = []
             for p in pdf_paths:
-                pages.extend(extract_text_from_pdf(p))#针对每个pdf提取
+                pages.extend(extract_text_from_pdf(p))
             chunks = []
             for page in pages:
-                chunks.extend(split_text(page)) #针对每个page分chunk
+                chunks.extend(split_text(page)) 
              
             images = []
             for pdf_path in pdf_paths:
@@ -454,13 +426,13 @@ async def construct_memory(
                 captions.extend(caption)
 
 
-        # Analyze也要改 TODO
+        # analyze needs to be modified TODO
         
         # ============================================================
-        # 定义文本处理函数（分析 + 嵌入）
+        # define text processing function (analyze + embed)
         # ============================================================
         async def process_text_content():
-            """处理所有文本内容：分析 + 嵌入"""
+            """process all text content: analyze + embed"""
             print(f"Analyzing textual content ({len(chunks)} chunks)...")
             text_analysis_start = time.time()
             text_tasks = [analyze_content(ch, modality="text") for ch in chunks]
@@ -468,7 +440,7 @@ async def construct_memory(
             try:
                 text_results = await asyncio.gather(*text_tasks, return_exceptions=True)
             except Exception as e:
-                print(f"错误：文本分析批量处理失败: {e}")
+                print(f"error: text analysis batch processing failed: {e}")
                 raise
             text_analysis_duration = time.time() - text_analysis_start
             add_stage_duration("text_analysis", text_analysis_duration)
@@ -479,14 +451,14 @@ async def construct_memory(
                 if isinstance(r, Exception) or not isinstance(r, dict) or "summary" not in r:
                     print(r)
                     failed += 1
-                    text_contents[i] = {"summary": "内容分析失败", "keywords": ["未知"], "tags": ["错误"]}
+                    text_contents[i] = {"summary": "content analysis failed", "keywords": ["unknown"], "tags": ["error"]}
                 else:
                     text_contents[i] = r
             if failed:
-                print(f"警告：共有 {failed}/{len(chunks)} 个文本块分析失败，使用默认值填充")
+                print(f"warning: {failed}/{len(chunks)} text chunks analysis failed, using default values")
             if len(text_contents) == 0:
-                raise RuntimeError("❌ 严重错误：所有文本块分析均失败！")
-            print(f"文本分析完成: {len(text_contents) - failed}/{len(chunks)} 成功")
+                raise RuntimeError("❌ serious error: all text chunks analysis failed!")
+            print(f"text analysis completed: {len(text_contents) - failed}/{len(chunks)} successful")
              
             # Embed text
             print("Embedding textual content")
@@ -499,9 +471,9 @@ async def construct_memory(
                 text_vecs = await embed_many(text_docs, kind="text_embedding")
                 for i, emb in enumerate(text_vecs):
                     text_contents[i]["embedding"] = [emb]
-                print(f"文本嵌入完成: {len(text_vecs)} 个向量")
+                print(f"text embedding completed: {len(text_vecs)} vectors")
             except Exception as e:
-                print(f"错误：文本嵌入生成失败: {e}")
+                print(f"error: text embedding generation failed: {e}")
                 raise
             text_embedding_duration = time.time() - text_embedding_start
             add_stage_duration("text_embedding", text_embedding_duration)
@@ -509,15 +481,15 @@ async def construct_memory(
             return text_contents
         
         # ============================================================
-        # 定义图像处理函数（分析 + 嵌入）
+        # define image processing function (analyze + embed)
         # ============================================================
         async def process_image_content():
-            """处理所有图像内容：分析 + 嵌入"""
+            """process all image content: analyze + embed"""
             print(f"Analyzing visual content ({len(images_b64)} images)...")
             image_contents: Dict[int, Dict[str, Any]] = {}
             
             if not images_b64:
-                print("跳过图像分析：未从PDF中提取到图像")
+                print("skip image analysis: no images extracted from PDF")
                 return image_contents
             
             image_analysis_start = time.time()
@@ -529,7 +501,7 @@ async def construct_memory(
             try:
                 img_results = await asyncio.gather(*img_tasks, return_exceptions=True)
             except Exception as e:
-                print(f"错误：图像分析批量处理失败: {e}")
+                print(f"error: image analysis batch processing failed: {e}")
                 raise
             image_analysis_duration = time.time() - image_analysis_start
             add_stage_duration("image_analysis", image_analysis_duration)
@@ -538,16 +510,16 @@ async def construct_memory(
             for i, r in enumerate(img_results):
                 if isinstance(r, Exception) or not isinstance(r, dict) or "summary" not in r:
                     img_failed += 1
-                    image_contents[i] = {"summary": "图像分析失败", "keywords": ["未知"], "tags": ["错误"]}
+                    image_contents[i] = {"summary": "image analysis failed", "keywords": ["unknown"], "tags": ["error"]}
                 else:
                     image_contents[i] = r
             if img_failed:
-                print(f"警告：共有 {img_failed}/{len(images_b64)} 个图像分析失败，使用默认值填充")
+                print(f"warning: {img_failed}/{len(images_b64)} image analysis failed, using default values")
             if img_failed == len(images_b64):
-                print("警告：所有图像分析均失败！将跳过图像notes添加。")
+                print("warning: all image analysis failed! will skip image notes addition.")
                 return {}
             else:
-                print(f"图像分析完成: {len(image_contents) - img_failed}/{len(images_b64)} 成功")
+                print(f"image analysis completed: {len(image_contents) - img_failed}/{len(images_b64)} successful")
             
             # Embed images (if any valid)
             if image_contents:
@@ -561,9 +533,9 @@ async def construct_memory(
                     img_vecs = await embed_many(img_docs, kind="image_embedding")
                     for i, emb in enumerate(img_vecs):
                         image_contents[i]["embedding"] = [emb]
-                    print(f"图像嵌入完成: {len(img_vecs)} 个向量")
+                    print(f"image embedding completed: {len(img_vecs)} vectors")
                 except Exception as e:
-                    print(f"错误：图像嵌入生成失败: {e}")
+                    print(f"error: image embedding generation failed: {e}")
                     raise
                 image_embedding_duration = time.time() - image_embedding_start
                 add_stage_duration("image_embedding", image_embedding_duration)
@@ -571,23 +543,23 @@ async def construct_memory(
             return image_contents
         
         if PARALLEL_ANALYSIS:
-            print("🚀 使用并行分析模式（文本和图像同时处理）")
+            print("🚀 use parallel analysis mode (text and image processing simultaneously)")
             parallel_start = time.time()
             text_contents, image_contents = await asyncio.gather(
                 process_text_content(),
                 process_image_content()
             )
             parallel_duration = time.time() - parallel_start
-            print(f"✓ 并行处理完成，总耗时: {parallel_duration:.2f}秒")
+            print(f"✓ parallel processing completed, total duration: {parallel_duration:.2f} seconds")
         else:
-            print("📋 使用串行分析模式（文本和图像依次处理）")
+            print("📋 use serial analysis mode (text and image processing sequentially)")
             text_contents = await process_text_content()
             image_contents = await process_image_content()
          
         # --- Add notes ---
         # filter out the notes with "No meaningful information" in the summary
         to_remove = [i for i, text_content in text_contents.items() if "No meaningful information" in text_content["summary"]]
-        print(f"过滤掉 {len(to_remove)} 条包含 'No meaningful information' 的文本notes")
+        print(f"filter out {len(to_remove)} text notes containing 'No meaningful information'")
         
         print("Adding textual notes to memory system")
         ok, bad = 0, 0
@@ -608,9 +580,9 @@ async def construct_memory(
                 bad += 1
                 if bad <= 3:
                     import traceback; traceback.print_exc()
-        print(f"文本notes添加完成: {ok} 成功, {bad} 失败")
+        print(f"text notes added successfully: {ok} successful, {bad} failed")
         if ok == 0:
-            raise RuntimeError("❌ 严重错误：未能成功添加任何文本note！")
+            raise RuntimeError("❌ serious error: failed to add any text note!")
          
         print("Adding visual notes to memory system")
         ok_i, bad_i = 0, 0
@@ -631,7 +603,7 @@ async def construct_memory(
                 ok_i += 1
             except Exception:
                 bad_i += 1
-        print(f"图像notes添加完成: {ok_i} 成功, {bad_i} 失败")
+        print(f"image notes added successfully: {ok_i} successful, {bad_i} failed")
          
         # --- Initialize local links for text notes only ---
         text_count = ok
@@ -648,19 +620,19 @@ async def construct_memory(
         
         
         # save the memory system before evolving
-        print(f"\n保存Memory System: {name}")
-        print(f"  准备保存 {len(ms.memories)} 条记忆...")
+        print(f"\nsave Memory System: {name}")
+        print(f"  prepare to save {len(ms.memories)} memories...")
         ms.save_memory_system(name+"_iter_0")
          
         # --- Evolve (optional) ---
         for it in range(evolve_iters):
-            print(f"Evolving memory system: iteration {it + 1}")
+            print(f"evolving memory system: iteration {it + 1}")
             evolution_start = time.time()
             _ = await ms.process_memory_all()
             evolution_duration = time.time() - evolution_start
             add_stage_duration("memory_evolution", evolution_duration)
             
-            print(f"Re-embedding after evolution iteration {it + 1}")
+            print(f"re-embedding after evolution iteration {it + 1}")
             re_embedding_start = time.time()
             meta = [n.context + " keywords: " + ", ".join(n.keywords) for n in ms.memories.values()]
             pre = await embed_many(meta, kind="re_embedding")
@@ -674,8 +646,8 @@ async def construct_memory(
                 note.links = [j for j in note.links if j != i]
                 
             # save the memory system after each iteration
-            print(f"\n保存Memory System: {name}")
-            print(f"  准备保存 {len(ms.memories)} 条记忆...")
+            print(f"\nsave Memory System: {name}")
+            print(f"  prepare to save {len(ms.memories)} memories...")
             ms.save_memory_system(name+"_iter_"+str(it+1))
 
     if not flag_dataset:
@@ -686,10 +658,10 @@ async def construct_memory(
                 pass
 
     print("\n" + "=" * 80)
-    print("Memory System 构建完成！")
-    print(f"   - 名称: {name}")
-    print(f"   - 总记忆数: {len(ms.memories)}")
-    print(f"   - 保存路径: {MEMORY_SYSTEMS_DIR}/{name}/")
+    print("Memory System built successfully!")
+    print(f"   - name: {name}")
+    print(f"   - total memories: {len(ms.memories)}")
+    print(f"   - save path: {MEMORY_SYSTEMS_DIR}/{name}/")
     print("=" * 80 + "\n")
     return ms
 

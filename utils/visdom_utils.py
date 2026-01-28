@@ -12,10 +12,7 @@ import re
 from config.config import LLM_BASE_URL, LLM_API_KEY
 from config.config import PROMPTS
 logger = logging.getLogger(__name__)
-
 from loguru import logger as loguru_logger
-
-import urllib.request
 import aiohttp
 
 async def get_pdf(url: str, filename: str):
@@ -62,10 +59,8 @@ def extract_text_from_pdf(pdf_path):
     """
     Extract text from a PDF file using OCR if needed.
     Clean control characters to prevent JSON parsing errors.
-    
     Args:
         pdf_path (str): Path to the PDF file
-        
     Returns:
         list: List of cleaned text from each page
     """

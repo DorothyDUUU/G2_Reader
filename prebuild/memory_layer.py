@@ -1,22 +1,17 @@
 # memory_system.py
-
 from ast import Str
-from typing import List, Dict, Optional, Literal, Any, Union
+from typing import List, Dict, Optional,Union
 import json
-from datetime import datetime
 import uuid
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-import os
 from pathlib import Path
 import pickle
 from openai import OpenAI
 import copy
-from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm
 import asyncio
 from tqdm.asyncio import tqdm_asyncio
-from prebuild.usage_tracker import add_chat_usage, add_embed_usage, add_single_call_duration
+from prebuild.usage_tracker import add_chat_usage, add_single_call_duration
 import time
 import re
 
@@ -30,14 +25,8 @@ from config.config import (
     PROMPTS,
     MAX_CONCURRENCY,
 )
-from tenacity import retry, stop_after_attempt, wait_exponential
 from openai import AsyncOpenAI
 
-
-client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-aclient = AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-
-qwen_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
 qwen_aclient = AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
 
 embed_client = OpenAI(api_key=EMBED_API_KEY, base_url=EMBED_BASE_URL)
@@ -161,10 +150,9 @@ class AgenticMemorySystem:
 
 
 
-    async def _call_llm_evolve(self, messages, response_format, temperature=0.7, max_tokens=20480):
-        # 带重试的 LLM 调用，确保 JSON 可解析；解析失败也会触发重试
+    async def _call_llm_evolve(self, messages, response_format, temperature=0.7):
         async with self._evolve_semaphore: 
-            call_start = time.time()  # 记录单次调用开始时间
+            call_start = time.time()  
             try:
                 response = await qwen_aclient.chat.completions.create(
                     model=self.llm_model,
@@ -176,18 +164,18 @@ class AgenticMemorySystem:
             except Exception as e:
                 print(f"[evolve] API error: {e}")
                 await asyncio.sleep(1)
-                raise  # ❌ API 失败，不记录此次调用时间
+                raise  
             
-            # ✅ 只有成功的调用才计算耗时
+            # ✅ Only successful calls are counted for duration
             call_duration = time.time() - call_start
         
-        # 记录演化阶段的token使用
+        # record token usage for evolution stage
         try:
             add_chat_usage(
                 getattr(response, "usage", None),
                 {"model": self.llm_model, "qkind": "memory_evolution"}
             )
-            # 只记录成功调用的最大耗时
+            # only record the maximum duration of successful calls
             add_single_call_duration("memory_evolution", call_duration)
         except Exception:
             pass
@@ -227,7 +215,7 @@ class AgenticMemorySystem:
                     )
                     neighbor_images.append(neighbor.content)
 
-            # 将 format 改为定点替换，避免 JSON 花括号触发 KeyError
+            # replace format with fixed replacement to avoid JSON curly braces triggering KeyError
             template = self.evolution_system_prompt
             prompt_memory = (
                 template.replace("{context}", str(note.context))
@@ -273,7 +261,7 @@ class AgenticMemorySystem:
                 messages[1]["content"].append({"type": "text", "text": f"Here is image {i+1}: "})
                 messages[1]["content"].append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}})
 
-            # 使用带重试的统一调用（替换原先的 client.chat.completions.create + json.loads）
+            # use unified call with retry (replace the original client.chat.completions.create + json.loads)
             response_json = await self._call_llm_evolve(messages, response_format, temperature=0.7, max_tokens=2048)
 
             note.links = [
@@ -383,7 +371,7 @@ class AgenticMemorySystem:
             system_dir.mkdir(parents=True, exist_ok=True)
 
             if len(self.memories) == 0:
-                raise ValueError("无法保存：memories字典为空！")
+                raise ValueError("cannot save: memories dictionary is empty!")
 
             pkl_path = system_dir / "memories.pkl"
             with open(pkl_path, "wb") as f:
@@ -391,21 +379,21 @@ class AgenticMemorySystem:
 
             pkl_size = pkl_path.stat().st_size
             if pkl_size <= 10:
-                raise RuntimeError(f"保存异常：memories.pkl 文件过小 ({pkl_size} 字节)")
+                raise RuntimeError(f"save exception: memories.pkl file too small ({pkl_size} bytes)")
 
             npy_path = system_dir / "retriever_embeddings.npy"
             np.save(npy_path, self.retriever.embeddings)
 
             npy_size = npy_path.stat().st_size
 
-            print(f"保存成功:")
-            print(f"  - memories.pkl: {pkl_size / 1024:.2f} KB ({len(self.memories)} 条记忆)")
+            print(f"save successfully:")
+            print(f"  - memories.pkl: {pkl_size / 1024:.2f} KB ({len(self.memories)} memories)")
             print(f"  - embeddings.npy: {npy_size / 1024:.2f} KB")
 
             return True
         
         except Exception as e:
-            print(f"save_memory_system 失败: {e}")
+            print(f"save_memory_system failed: {e}")
             raise
 
     # ======================================================================
@@ -416,76 +404,75 @@ class AgenticMemorySystem:
             system_dir = Path(MEMORY_SYSTEMS_DIR) / name
 
             if not system_dir.exists():
-                raise FileNotFoundError(f"Memory system 目录不存在: {system_dir}")
+                raise FileNotFoundError(f"Memory system directory does not exist: {system_dir}")
 
             pkl_path = system_dir / "memories.pkl"
             npy_path = system_dir / "retriever_embeddings.npy"
 
             if not pkl_path.exists():
-                raise FileNotFoundError(f"memories.pkl 不存在: {pkl_path}")
+                raise FileNotFoundError(f"memories.pkl does not exist: {pkl_path}")
             if not npy_path.exists():
-                raise FileNotFoundError(f"retriever_embeddings.npy 不存在: {npy_path}")
+                raise FileNotFoundError(f"retriever_embeddings.npy does not exist: {npy_path}")
 
             pkl_size = pkl_path.stat().st_size
             if pkl_size <= 10:
-                raise ValueError(f"memories.pkl 文件过小 ({pkl_size} 字节)")
+                raise ValueError(f"memories.pkl file too small ({pkl_size} bytes)")
 
-            # --- 兼容旧版 pickle：为 'memory_layer' 建立模块别名 ---
             import importlib, sys
             if "memory_layer" not in sys.modules:
                 try:
                     sys.modules["memory_layer"] = importlib.import_module("prebuild.memory_layer")
                 except Exception as e:
-                    print(f"load_memory_system 失败: {e}")
+                    print(f"load_memory_system failed: {e}")
                     raise
 
             with open(pkl_path, "rb") as f:
                 self.memories = pickle.load(f)
 
             if not isinstance(self.memories, dict):
-                raise TypeError("memories 应为 dict")
+                raise TypeError("memories should be a dict")
 
             if len(self.memories) == 0:
-                raise ValueError("加载的 memories 为空")
+                raise ValueError("loaded memories are empty")
 
             self.retriever.embeddings = np.load(npy_path)
 
-            print(f"加载成功:")
-            print(f"  - 记忆数量: {len(self.memories)}")
-            print(f"  - 嵌入向量形状: {self.retriever.embeddings.shape}")
+            print(f"load successfully:")
+            print(f"  - memories number: {len(self.memories)}")
+            print(f"  - embedding shape: {self.retriever.embeddings.shape}")
 
             return True
         
         except Exception as e:
-            print(f"load_memory_system 失败: {e}")
+            print(f"load_memory_system failed: {e}")
             raise
 
     def _phrase_rank_texts_optimized(self, docs: List[str], query_terms: List[str], k: int = 5, return_indices: bool = False) -> Union[List[str], List[int]]:
         """
-        短语匹配打分（优化版）。
+        phrase matching scoring (optimized version).
         
         Args:
-            docs: 文本列表
-            query_terms: 查询词列表
-            k: 返回前 K 个
-            return_indices: 
-                - False (默认): 返回匹配的文本字符串列表 [str]
-                - True: 返回匹配的文档在 docs 中的索引列表 [int]
+            docs: text list
+            query_terms: query terms list
+            k: return top K
+            return_indices:
+                - False (default): return matched text string list [str]
+                - True: return matched document indices in docs [int]
                 
-        逻辑：优先奖励命中更多"不同"的关键词。
+        logic: prioritize rewarding more "different" keywords.
         """
-        # 1. 预处理 Query Terms
+        # 1. preprocess query terms
         valid_terms = [qt.strip() for qt in (query_terms or []) if qt and qt.strip()]
         valid_terms.sort(key=len, reverse=True)     
         if not valid_terms:
             return []
 
-        # 2. 构建正则
+        # 2. build regex
         clean_terms = [re.escape(t) for t in valid_terms]
         pattern_str = r"\b(?:" + "|".join(clean_terms) + r")\b"
         regex = re.compile(pattern_str, re.IGNORECASE)
 
-        # 3. 扫描文档并打分
+        # 3. scan documents and score
         scores = []
         for i, doc in enumerate(docs):
             if not doc: continue           
@@ -493,23 +480,23 @@ class AgenticMemorySystem:
             if not matches:
                 continue
 
-            # --- 核心算分优化 ---         
-            # A. 覆盖度得分 (Unique Hits)
+            # --- core scoring optimization ---         
+            # A. coverage score (Unique Hits)
             unique_hits = {m.lower() for m in matches}
             count_unique = len(unique_hits)            
-            # B. 频次得分 (Total Hits)
+            # B. frequency score (Total Hits)
             count_total = len(matches)            
-            # C. 综合打分: 覆盖度权重 1.0, 频次权重 0.01
+            # C. comprehensive scoring: coverage weight 1.0, frequency weight 0.01
             score = count_unique * 1.0 + count_total * 0.01         
             scores.append((i, score))
 
-        # 4. 排序（过滤0分）
+        # 4. sort (filter 0 scores)
         scores = [t for t in scores if t[1] > 0]
         if not scores:
             return [] if return_indices else []
         scores.sort(key=lambda x: x[1], reverse=True)
         top_idx = [i for i, _ in scores[:k]]
-        # 5. 根据 flag 返回不同结果
+        # 5. return different results based on flag
         if return_indices:
             return top_idx
         else:
@@ -548,5 +535,3 @@ class AgenticMemorySystem:
             n = all_memories[mi]
             notes.append(n)
         return notes
-
-    
