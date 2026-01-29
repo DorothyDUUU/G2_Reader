@@ -4,7 +4,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-25xx.xxxxx-b31b1b.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 
-> 🎯 **$G^2$‑Reader** $G^2$-Reader is a dual-graph RAG framework designed for complex multimodal document QA. It overcomes "semantic fragmentation" by utilizing a Content Graph ($\mathcal{G}_C$) that preserves document-native layouts and cross-modal alignments through iterative VLM-based message passing. Simultaneously, it employs a Planning Graph ($\mathcal{G}_P$), an agentic DAG that decomposes queries into sub-questions and dynamically refines reasoning paths based on evidence sufficiency. 
+> 🎯 **$G^2$‑Reader** is a dual-graph RAG framework designed for complex multimodal document QA. It overcomes "semantic fragmentation" by utilizing a Content Graph ($\mathcal{G}_C$) that preserves document-native layouts and cross-modal alignments through iterative VLM-based message passing. Simultaneously, it employs a Planning Graph ($\mathcal{G}_P$), an agentic DAG that decomposes queries into sub-questions and dynamically refines reasoning paths based on evidence sufficiency. 
 
 ---
 
