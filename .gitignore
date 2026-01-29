@@ -56,6 +56,7 @@ logs/
 *.log
 *.out
 *.err
+*.md
 
 # Model files
 *.pt
