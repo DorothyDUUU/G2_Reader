@@ -44,9 +44,6 @@ data/
 *.json
 *.jsonl
 *.pdf
-*.jpg
-*.jpeg
-*.png
 *.gif
 *.pkl
 *.pickle
