@@ -1,4 +1,4 @@
-![logo](assets/logo.png)
+![logo](asset/logo.png)
 
 # 💻 $G^2$‑Reader: Dynamic DAG‑based Document Reader for Multi‑modal Long‑Document Understanding
 
@@ -10,7 +10,7 @@ ce2f57a (update png)
 
 > 🎯 **$G^2$‑Reader** is a dual-graph RAG framework designed for complex multimodal document QA. It overcomes "semantic fragmentation" by utilizing a Content Graph ($\mathcal{G}_C$) that preserves document-native layouts and cross-modal alignments through iterative VLM-based message passing. Simultaneously, it employs a Planning Graph ($\mathcal{G}_P$), an agentic DAG that decomposes queries into sub-questions and dynamically refines reasoning paths based on evidence sufficiency. 
 
-![Overview](assets/overview.png)
+![Overview](asset/overview.png)
 
 ---
 
