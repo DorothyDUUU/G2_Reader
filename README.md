@@ -2,7 +2,6 @@
 
 [![project](https://img.shields.io/badge/project-Page-blue)](#)
 [![arXiv](https://img.shields.io/badge/arXiv-25xx.xxxxx-b31b1b.svg)](#)
-HEAD
 =======
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 ce2f57a (update png)
