@@ -64,7 +64,7 @@ logs/
 *.ckpt
 *.bin
 *.safetensors
-
+git push -u origin main
 # Cache
 .cache/
 *.cache
