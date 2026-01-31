@@ -84,21 +84,6 @@ python scripts/evaluate.py
 
 ---
 
-## ✍️ Citation
-
-If you find D2-Reader useful for your research, please cite:
-
-```bibtex
-@article{zhou2026d2reader,
-  title={D2-Reader: Dynamic DAG-based Document Reader for Multi-modal Long-Document Understanding},
-  author={Yifan Zhou and et al.},
-  journal={arXiv preprint arXiv:25xx.xxxxx},
-  year={2026}
-}
-```
-
----
-
 ## 📝 License
 
 This project is licensed under the **Apache 2.0** License - see the [LICENSE](LICENSE) file for details.
