@@ -29,7 +29,7 @@ conda create -n G2-reader python=3.10
 conda activate G2-reader
 
 # Clone repository
-git clone https://github.com/justLittleWhite/G2-Reader.git
+git clone https://github.com/DorothyDUUU/G2-Reader.git
 cd G2-Reader
 
 # Install dependencies
