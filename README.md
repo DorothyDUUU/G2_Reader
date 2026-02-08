@@ -32,6 +32,10 @@ conda activate G2-reader
 git clone https://github.com/DorothyDUUU/G2-Reader.git
 cd G2-Reader
 
+#Get processed documents of tasks
+cd data
+git clone https://huggingface.co/datasets/LittleWhite1031/G2-Reader
+
 # Install dependencies
 pip install -r requirements.txt
 ```
