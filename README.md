@@ -93,10 +93,10 @@ python scripts/evaluate.py
 If you find D2-Reader useful for your research, please cite:
 
 ```bibtex
-@article{zhou2026d2reader,
-  title={D2-Reader: Dynamic DAG-based Document Reader for Multi-modal Long-Document Understanding},
-  author={Yifan Zhou and et al.},
-  journal={arXiv preprint arXiv:25xx.xxxxx},
+@article{G2_reader,
+  title={$ G\^{} 2$-Reader: Dual Evolving Graphs for Multimodal Document QA},
+  author={Du, Yaxin and Song, Junru and Zhou, Yifan and Wang, Cheng and Gu, Jiahao and Chen, Zimeng and Chen, Menglan and Yao, Wen and Yang, Yang and Wen, Ying and others},
+  journal={arXiv preprint arXiv:2601.22055},
   year={2026}
 }
 ```
