@@ -2,7 +2,7 @@
 
 # 💻 $G^2$‑Reader: Dynamic DAG‑based Document Reader for Multi‑modal Long‑Document Understanding
 
-[![arXiv](https://img.shields.io/badge/arXiv-2601.22055-b31b1b.svg)](#)
+[![arXiv](https://img.shields.io/badge/arXiv-2601.22055-b31b1b.svg)](https://arxiv.org/abs/2601.22055)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 =======
 
@@ -84,13 +84,13 @@ python scripts/evaluate.py
 
 ## 📢 News
 * [2026-01-28] 🎉 Project cleanup completed and code successfully uploaded to GitHub.
-* [2026-01-xx] 📄 D2-Reader paper submitted.
+* [2026-01-xx] 📄 G2-Reader paper submitted.
 
 ---
 
 ## ✍️ Citation
 
-If you find D2-Reader useful for your research, please cite:
+If you find G2-Reader useful for your research, please cite:
 
 ```bibtex
 @article{G2_reader,
