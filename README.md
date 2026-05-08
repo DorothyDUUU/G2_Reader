@@ -83,8 +83,9 @@ python scripts/evaluate.py
 ---
 
 ## 📢 News
+* [2026-05-01] 🎉 G2-Reader paper accepted by ICML 2026
 * [2026-01-28] 🎉 Project cleanup completed and code successfully uploaded to GitHub.
-* [2026-01-xx] 📄 G2-Reader paper submitted.
+* [2026-01-31] 📄 G2-Reader paper submitted.
 
 ---
 
